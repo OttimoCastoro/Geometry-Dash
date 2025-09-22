@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Geometry Dash - Web (no install)</title>
+<style>
+  html,body { height:100%; margin:0; background:#111; display:flex; align-items:center; justify-content:center; }
+  #container { width:100%; height:100%; max-width:1400px; max-height:800px; position:relative; }
+  canvas { width:100%; height:100%; display:block; background:#87c2ff; border-radius:8px; box-shadow:0 8px 30px rgba(0,0,0,.6); }
+  .overlay { position:absolute; left:12px; top:12px; color:#222; background:rgba(255,255,255,.9); padding:6px 10px; border-radius:6px; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; font-size:13px; }
+  .bottom { position:absolute; right:12px; bottom:12px; color:#eee; background:rgba(0,0,0,.5); padding:8px 12px; border-radius:8px; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; font-size:13px; }
+  a.link { color:#06f; text-decoration:underline; }
+</style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="game"></canvas>
+    <div class="overlay">
+      Spazio / ↑ / Backspace = Salta · B = Hitbox · Esc = Pausa · Tocca/tap = Salta
+    </div>
+    <div class="bottom" id="bottomText">Premi spazio per iniziare</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // Hi-DPI scaling
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    const DPR = window.devicePixelRatio || 1;
+    canvas.width = Math.max(300, Math.floor(rect.width * DPR));
+    canvas.height = Math.max(200, Math.floor(rect.height * DPR));
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize, {passive:true});
+  resize();
+
+  // Game constants (valori ispirati al tuo script python)
+  const GROUND_HEIGHT = 50;
+  const PLAYER_SIZE = 40;
+  const FLOOR_OFFSET = PLAYER_SIZE * 2; // 80
+  let WIDTH = canvas.clientWidth;
+  let HEIGHT = canvas.clientHeight;
+
+  // camera offset relative to visible size (player at 1/4)
+  const CAMERA_OFFSET_X_RATIO = 0.25;
+
+  const PLAYER_SPEED_X = 7;
+  const JUMP_POWER = -15;
+  const JUMP_BOOST_X = 3;
+  const GRAVITY = 1;
+
+  const SPIKE_W = 30, SPIKE_H = 40;
+  const BLOCK_W = 40, BLOCK_H = 40;
+  const JUMP_PAD_W = 40, JUMP_PAD_H = 10;
+  const JUMP_PAD_POWER = -22;
+  const JUMP_ORB_R = 18;
+  const JUMP_ORB_POWER = -15;
+
+  const LEVEL_LENGTH = 6000;
+
+  // Colors
+  const WHITE = '#ffffff';
+  const BLACK = '#000000';
+  const BLUE = '#0096ff';
+  const SPIKE_COLOR = '#c83232';
+  const HITBOX_COLOR = '#00ff55';
+
+  function nowMs(){ return performance.now(); }
+
+  // Level design (translated from your LEVEL_DESIGN)
+  const LEVEL_DESIGN = [
+    ['block', 400],
+    ['jump_pad', 600],
+    ['spike', 800],
+    ['spike', 1000],
+
+    ['block', 1300],
+    ['jump_pad', 1700],
+    ['spike', 1600],
+    ['block', 1800],
+    ['jump_orb', 1950],
+    ['spike', 2100],
+
+    ['block', 2000],
+    ['spike', 2400],
+    ['jump_pad', 2600],
+
+    ['spike', 2800],
+    ['spike', 3000],
+    ['spike', 3200],
+    ['jump_pad', 3400],
+
+    ['block', 3600],
+    ['spike', 3800],
+    ['jump_pad', 4000],
+    ['block', 4200],
+    ['spike', 4400],
+
+    ['block', 4600],
+    ['jump_orb', 4800],
+    ['block', 5000],
+    ['spike', 5200],
+    ['jump_pad', 5400],
+    ['block', 5600],
+    ['spike', 5800]
+  ];
+
+  // Game state
+  let player = { x:100, y:0, vy:0 };
+  let onGround = true;
+  let jumpKeyHeld = false;
+  let jumpKeyArmed = false;
+  let showHitboxes = false;
+  let paused = false;
+  let levelComplete = false;
+  let levelCompleteTime = null;
+  let lastDeathTime = null;
+  let cameraX = 0;
+  let bottomText = document.getElementById('bottomText');
+
+  // obstacles
+  let spikes = [];
+  let blocks = [];
+  let jumpPads = [];
+  let jumpOrbs = [];
+
+  function resetGame(){
+    WIDTH = canvas.clientWidth;
+    HEIGHT = canvas.clientHeight;
+    player.x = 100;
+    player.y = HEIGHT - GROUND_HEIGHT - FLOOR_OFFSET - PLAYER_SIZE;
+    player.vy = 0;
+    onGround = true;
+    jumpKeyHeld = false;
+    jumpKeyArmed = false;
+    cameraX = 0;
+    spikes = [];
+    blocks = [];
+    jumpPads = [];
+    jumpOrbs = [];
+    levelComplete = false;
+    levelCompleteTime = null;
+    lastDeathTime = null;
+    for (let item of LEVEL_DESIGN){
+      const type = item[0], x = item[1];
+      const baseY = HEIGHT - GROUND_HEIGHT - FLOOR_OFFSET;
+      if (type === 'spike') spikes.push({x:x, y:baseY});
+      if (type === 'block') blocks.push({x:x, y:baseY - BLOCK_H});
+      if (type === 'jump_pad') jumpPads.push({x:x, y:baseY - JUMP_PAD_H});
+      if (type === 'jump_orb') jumpOrbs.push({x:x, y:baseY - 120});
+    }
+    bottomText.textContent = 'Premi spazio per iniziare';
+  }
+
+  resetGame();
+
+  // Input
+  const keys = {};
+  window.addEventListener('keydown', (e)=>{
+    if (e.repeat) return;
+    keys[e.key] = true;
+    if ([' ', 'ArrowUp', 'Backspace'].includes(e.key)){
+      if (!onGround) jumpKeyArmed = true;
+      jumpKeyHeld = true;
+      if (onGround && !paused){
+        player.vy = JUMP_POWER;
+        player.x += JUMP_BOOST_X;
+        onGround = false;
+      }
+    }
+    if (e.key.toLowerCase() === 'b'){
+      showHitboxes = !showHitboxes;
+    }
+    if (e.key === 'Escape'){
+      paused = !paused;
+      if (paused) bottomText.textContent = 'Pausa - premi Esc per riprendere';
+      else bottomText.textContent = '';
+    }
+  }, {passive:true});
+  window.addEventListener('keyup', (e)=>{
+    keys[e.key] = false;
+    if ([' ', 'ArrowUp', 'Backspace'].includes(e.key)){
+      jumpKeyHeld = false;
+      jumpKeyArmed = false;
+    }
+  }, {passive:true});
+
+  // touch for mobile: tap to jump / start
+  canvas.addEventListener('touchstart', (e)=>{
+    e.preventDefault();
+    if (!onGround) jumpKeyArmed = true;
+    jumpKeyHeld = true;
+    if (onGround && !paused){
+      player.vy = JUMP_POWER;
+      player.x += JUMP_BOOST_X;
+      onGround = false;
+    }
+  }, {passive:false});
+  canvas.addEventListener('touchend', (e)=>{
+    e.preventDefault();
+    jumpKeyHeld = false;
+    jumpKeyArmed = false;
+  }, {passive:false});
+
+  // collision helpers
+  function rectsOverlap(r1, r2){
+    return !(r1.x + r1.w <= r2.x || r1.x >= r2.x + r2.w || r1.y + r1.h <= r2.y || r1.y >= r2.y + r2.h);
+  }
+
+  // main loop
+  let lastTime = nowMs();
+  function frame(){
+    const t = nowMs();
+    const dt = Math.min(40, t - lastTime); // ms
+    lastTime = t;
+
+    // keep canvas sizes updated (in case of resize)
+    resize();
+    WIDTH = canvas.clientWidth;
+    HEIGHT = canvas.clientHeight;
+
+    if (paused){
+      draw();
+      requestAnimationFrame(frame);
+      return;
+    }
+
+    if (lastDeathTime !== null){
+      if (t - lastDeathTime < 500){
+        // show game over for a moment
+        draw();
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle = '#ff6666';
+        ctx.font = '48px system-ui,Segoe UI,Roboto';
+        ctx.textAlign = 'center';
+        ctx.fillText('Game Over!', WIDTH/2, HEIGHT/2);
+        ctx.restore();
+        requestAnimationFrame(frame);
+        return;
+      } else {
+        resetGame();
+      }
+    }
+
+    if (!levelComplete){
+      // physics
+      player.vy += GRAVITY;
+      player.y += player.vy;
+      player.x += PLAYER_SPEED_X;
+
+      // camera
+      const camOff = Math.floor(WIDTH * CAMERA_OFFSET_X_RATIO);
+      cameraX = player.x - camOff;
+
+      // remove old obstacles (optional)
+      spikes = spikes.filter(s => s.x > cameraX - 200);
+      blocks = blocks.filter(b => b.x > cameraX - 200);
+      jumpPads = jumpPads.filter(jp => jp.x > cameraX - 200);
+      jumpOrbs = jumpOrbs.filter(jo => jo.x > cameraX - 200);
+
+      // player rect (on screen, at camOff)
+      const playerRect = { x: camOff, y: Math.round(player.y), w: PLAYER_SIZE, h: PLAYER_SIZE };
+
+      // spikes collision
+      for (let s of spikes){
+        const spikeRect = { x: s.x - cameraX, y: s.y - SPIKE_H, w: SPIKE_W, h: SPIKE_H };
+        if (rectsOverlap(playerRect, spikeRect)){
+          lastDeathTime = t;
+          bottomText.textContent = 'Hai perso — respawn...';
+          break;
+        }
+      }
+
+      // jump pads
+      let jumpPadHit = false;
+      for (let jp of jumpPads){
+        const padRect = { x: jp.x - cameraX, y: jp.y, w: JUMP_PAD_W, h: JUMP_PAD_H };
+        if (rectsOverlap(playerRect, padRect) && player.vy >= 0){
+          player.vy = JUMP_PAD_POWER;
+          onGround = false;
+          jumpKeyHeld = false;
+          jumpPadHit = true;
+        }
+      }
+
+      // blocks collision (landing)
+      if (!jumpPadHit){
+        let onBlock = false;
+        for (let b of blocks){
+          const blockRect = { x: b.x - cameraX, y: b.y, w: BLOCK_W, h: BLOCK_H };
+          if (rectsOverlap(playerRect, blockRect)){
+            // was above block previously?
+            if (player.y + PLAYER_SIZE - player.vy <= b.y && player.vy >= 0){
+              player.y = b.y - PLAYER_SIZE;
+              player.vy = 0;
+              onBlock = true;
+              jumpKeyArmed = false;
+              if (!onGround && jumpKeyHeld){
+                player.vy = JUMP_POWER;
+                onGround = false;
+              } else {
+                onGround = true;
+              }
+            } else {
+              // side collision --> death
+              lastDeathTime = t;
+              bottomText.textContent = 'Hai perso — respawn...';
+              break;
+            }
+          }
+        }
+        if (!onBlock){
+          // ground
+          if (player.y >= HEIGHT - GROUND_HEIGHT - FLOOR_OFFSET - PLAYER_SIZE){
+            player.y = HEIGHT - GROUND_HEIGHT - FLOOR_OFFSET - PLAYER_SIZE;
+            player.vy = 0;
+            jumpKeyArmed = false;
+            if (!onGround && jumpKeyHeld){
+              player.vy = JUMP_POWER;
+              onGround = false;
+            } else {
+              onGround = true;
+            }
+          } else {
+            onGround = false;
+          }
+        }
+      }
+
+      // jump orbs
+      for (let jo of jumpOrbs){
+        const orbRect = { x: jo.x - cameraX - JUMP_ORB_R, y: jo.y - JUMP_ORB_R, w: JUMP_ORB_R*2, h: JUMP_ORB_R*2 };
+        if (rectsOverlap(playerRect, orbRect) && jumpKeyArmed && player.vy > 0){
+          player.vy = JUMP_ORB_POWER;
+          onGround = false;
+          jumpKeyArmed = false;
+        }
+      }
+
+      // level complete
+      if (player.x >= LEVEL_LENGTH){
+        levelComplete = true;
+        levelCompleteTime = t;
+        bottomText.textContent = 'Level Complete! si riavvia...';
+      }
+    } else {
+      // level complete display then reset
+      if (levelCompleteTime && t - levelCompleteTime > 2000){
+        resetGame();
+      }
+    }
+
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function draw(){
+    // clear
+    ctx.clearRect(0,0,WIDTH,HEIGHT);
+
+    // background vertical gradient
+    const g = ctx.createLinearGradient(0,0,0,HEIGHT);
+    g.addColorStop(0, '#78b4ff');
+    g.addColorStop(1, '#d8ecff');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,WIDTH,HEIGHT);
+
+    // compute camera offset and draw ground area expanded
+    const camOff = Math.floor(WIDTH * CAMERA_OFFSET_X_RATIO);
+    // ground base y
+    const groundY = HEIGHT - GROUND_HEIGHT - FLOOR_OFFSET;
+
+    // draw ground rectangle large enough
+    ctx.fillStyle = '#282828';
+    ctx.fillRect(-cameraX, groundY, Math.max(WIDTH*10, LEVEL_LENGTH), GROUND_HEIGHT);
+
+    // top/bottom lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-cameraX, groundY);
+    ctx.lineTo(Math.max(WIDTH*10, LEVEL_LENGTH), groundY);
+    ctx.stroke();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(-cameraX, groundY + GROUND_HEIGHT - 2);
+    ctx.lineTo(Math.max(WIDTH*10, LEVEL_LENGTH), groundY + GROUND_HEIGHT - 2);
+    ctx.stroke();
+
+    // tile pattern
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    const tileW = 60;
+    for (let x = 0; x < Math.max(WIDTH*10, LEVEL_LENGTH); x += tileW){
+      ctx.beginPath();
+      ctx.moveTo(x - cameraX, groundY);
+      ctx.lineTo(x - cameraX, groundY + GROUND_HEIGHT);
+      ctx.stroke();
+    }
+
+    // draw blocks
+    for (let b of blocks){
+      const rx = b.x - cameraX, ry = b.y;
+      // border
+      roundRect(ctx, rx, ry, BLOCK_W, BLOCK_H, 6, true, false, '#3c3c3c');
+      // inner
+      roundRect(ctx, rx+3, ry+3, BLOCK_W-6, BLOCK_H-6, 4, false, true, '#787878');
+      // lines
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(rx + 8, ry + 8);
+      ctx.lineTo(rx + BLOCK_W - 8, ry + 8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(rx + 8, ry + BLOCK_H - 12);
+      ctx.lineTo(rx + BLOCK_W - 8, ry + BLOCK_H - 12);
+      ctx.stroke();
+    }
+
+    // draw spikes
+    for (let s of spikes){
+      const sx = s.x - cameraX, sy = s.y;
+      ctx.fillStyle = SPIKE_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + SPIKE_W/2, sy - SPIKE_H);
+      ctx.lineTo(sx + SPIKE_W, sy);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // draw jump pads
+    for (let jp of jumpPads){
+      const rx = jp.x - cameraX, ry = jp.y;
+      ctx.fillStyle = '#ffff66';
+      ctx.fillRect(rx, ry, JUMP_PAD_W, JUMP_PAD_H);
+    }
+
+    // draw jump orbs
+    for (let jo of jumpOrbs){
+      const cx = jo.x - cameraX, cy = jo.y;
+      ctx.beginPath();
+      ctx.fillStyle = '#ff64ff';
+      ctx.arc(cx, cy, JUMP_ORB_R, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // draw player
+    const playerScreenX = camOff;
+    const playerScreenY = Math.round(player.y);
+    // shadow
+    // draw cube
+    ctx.fillStyle = BLACK;
+    roundRect(ctx, playerScreenX, playerScreenY, PLAYER_SIZE, PLAYER_SIZE, 6, true, false, BLACK);
+    roundRect(ctx, playerScreenX + 3, playerScreenY + 3, PLAYER_SIZE - 6, PLAYER_SIZE - 6, 4, true, false, BLUE);
+    // eyes
+    ctx.fillStyle = WHITE;
+    ctx.fillRect(playerScreenX + 8, playerScreenY + 12, 8, 12);
+    ctx.fillRect(playerScreenX + PLAYER_SIZE - 8 - 8, playerScreenY + 12, 8, 12);
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(playerScreenX + 11, playerScreenY + 17, 3, 5);
+    ctx.fillRect(playerScreenX + PLAYER_SIZE - 11 - 3, playerScreenY + 17, 3, 5);
+
+    // hitboxes
+    if (showHitboxes){
+      ctx.strokeStyle = HITBOX_COLOR;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(playerScreenX, playerScreenY, PLAYER_SIZE, PLAYER_SIZE);
+      for (let s of spikes){
+        const spikeRect = { x: s.x - cameraX, y: s.y - SPIKE_H, w: SPIKE_W, h: SPIKE_H };
+        ctx.strokeRect(spikeRect.x, spikeRect.y, spikeRect.w, spikeRect.h);
+      }
+      for (let b of blocks){
+        ctx.strokeRect(b.x - cameraX, b.y, BLOCK_W, BLOCK_H);
+      }
+      for (let jp of jumpPads){
+        ctx.strokeRect(jp.x - cameraX, jp.y, JUMP_PAD_W, JUMP_PAD_H);
+      }
+      for (let jo of jumpOrbs){
+        ctx.strokeRect(jo.x - cameraX - JUMP_ORB_R, jo.y - JUMP_ORB_R, JUMP_ORB_R*2, JUMP_ORB_R*2);
+      }
+    }
+
+    // overlay text: B per hitbox
+    ctx.font = '14px system-ui,Segoe UI,Roboto';
+    ctx.fillStyle = 'rgba(20,20,20,0.9)';
+    ctx.fillText('B per mostrare le hitbox', WIDTH - 180, 24);
+
+    // level complete or game over text managed elsewhere
+  }
+
+  // utility: rounded rectangle drawing
+  function roundRect(ctx,x,y,w,h,r, fill, stroke, color){
+    if (typeof r === 'undefined') r = 5;
+    if (typeof color !== 'undefined') ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+  }
+
+  // start loop
+  requestAnimationFrame(frame);
+
+  // expose simple API to embed game (optional)
+  window.geometryDashWeb = {
+    reset: resetGame,
+    toggleHitboxes(){ showHitboxes = !showHitboxes; },
+    pause(){ paused = true; },
+    resume(){ paused = false; }
+  };
+
+  // Informazioni iniziali
+  bottomText.textContent = 'Apri questa pagina in un browser. Tocca o premi spazio per giocare.';
+
+})();
+</script>
+</body>
+</html>
