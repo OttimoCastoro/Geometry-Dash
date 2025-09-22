@@ -489,6 +489,39 @@
       }
     }
 
+    // progress bar (top center)
+    ctx.save();
+    const progress = Math.min(1, Math.max(0, player.x / LEVEL_LENGTH));
+    const barW = Math.min(520, Math.max(240, Math.floor(WIDTH * 0.5)));
+    const barH = 18;
+    const barX = Math.floor((WIDTH - barW) / 2);
+    const barY = 8;
+    // background
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    roundRect(ctx, barX, barY, barW, barH, 9, true, false);
+    // border
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    roundRect(ctx, barX, barY, barW, barH, 9, false, true);
+    // fill
+    const fillW = Math.max(2, Math.floor((barW - 4) * progress));
+    const fillX = barX + 2;
+    const fillY = barY + 2;
+    const fillH = barH - 4;
+    // fill gradient for visibility
+    const fg = ctx.createLinearGradient(fillX, 0, fillX + fillW, 0);
+    fg.addColorStop(0, '#00e676');
+    fg.addColorStop(1, '#00b248');
+    ctx.fillStyle = fg;
+    roundRect(ctx, fillX, fillY, fillW, fillH, 7, true, false);
+    // percentage text
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.font = 'bold 13px system-ui,Segoe UI,Roboto';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.floor(progress * 100) + '%', Math.floor(barX + barW / 2), Math.floor(barY + barH / 2));
+    ctx.restore();
+
     // overlay text: B per hitbox
     ctx.font = '14px system-ui,Segoe UI,Roboto';
     ctx.fillStyle = 'rgba(20,20,20,0.9)';
