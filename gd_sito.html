@@ -11,6 +11,17 @@
   .overlay { position:absolute; left:12px; top:12px; color:#222; background:rgba(255,255,255,.9); padding:6px 10px; border-radius:6px; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; font-size:13px; }
   .bottom { position:absolute; right:12px; bottom:12px; color:#eee; background:rgba(0,0,0,.5); padding:8px 12px; border-radius:8px; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; font-size:13px; }
   a.link { color:#06f; text-decoration:underline; }
+  /* Mobile mode: remove container caps */
+  #container.mobile { max-width:none; max-height:none; }
+  /* Mode modal */
+  .mode-modal { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:5; }
+  .mode-card { background:#ffffff; color:#111; padding:16px 18px; border-radius:10px; width:min(92vw, 420px); box-shadow:0 10px 30px rgba(0,0,0,0.4); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
+  .mode-card h2 { margin:0 0 12px 0; font-size:18px; }
+  .mode-card p { margin:0 0 14px 0; font-size:14px; color:#444; }
+  .mode-actions { display:flex; gap:10px; }
+  .mode-actions button { flex:1; padding:10px 12px; font-size:15px; border-radius:8px; border:none; cursor:pointer; }
+  .btn-pc { background:#0b65ff; color:white; }
+  .btn-mobile { background:#10b981; color:white; }
 </style>
 </head>
 <body>
@@ -20,12 +31,26 @@
       Spazio / ↑ / Backspace = Salta · B = Hitbox · Esc = Pausa · Tocca/tap = Salta
     </div>
     <div class="bottom" id="bottomText">Premi spazio per iniziare</div>
+    <div class="mode-modal" id="modeModal" aria-modal="true" role="dialog">
+      <div class="mode-card">
+        <h2>Stai giocando su telefono o su PC?</h2>
+        <p>Scegli per ottimizzare comandi e dimensioni dello schermo.</p>
+        <div class="mode-actions">
+          <button class="btn-pc" id="btnPC">PC</button>
+          <button class="btn-mobile" id="btnMobile">Telefono</button>
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
+  const container = document.getElementById('container');
+  const modeModal = document.getElementById('modeModal');
+  const btnPC = document.getElementById('btnPC');
+  const btnMobile = document.getElementById('btnMobile');
 
   // Hi-DPI scaling
   function resize() {
@@ -116,6 +141,7 @@
   let jumpKeyArmed = false;
   let showHitboxes = false;
   let paused = false;
+  let isMobileMode = null; // null until selected; true for phone, false for PC
   let levelComplete = false;
   let levelCompleteTime = null;
   let lastDeathTime = null;
@@ -153,8 +179,34 @@
       if (type === 'jump_pad') jumpPads.push({x:x, y:baseY - JUMP_PAD_H});
       if (type === 'jump_orb') jumpOrbs.push({x:x, y:baseY - 120});
     }
-    bottomText.textContent = 'Premi spazio per iniziare';
+    bottomText.textContent = isMobileMode ? 'Tocca per iniziare' : 'Premi spazio per iniziare';
   }
+
+  // Mode selection setup
+  function applyModeSelection(mobile){
+    isMobileMode = mobile;
+    if (isMobileMode){
+      container.classList.add('mobile');
+      // Update overlay text for touch-only
+      const overlay = container.querySelector('.overlay');
+      if (overlay) overlay.textContent = 'Tocca lo schermo per saltare · Esc = Pausa';
+      bottomText.textContent = 'Tocca per iniziare';
+    } else {
+      container.classList.remove('mobile');
+      const overlay = container.querySelector('.overlay');
+      if (overlay) overlay.textContent = 'Spazio / ↑ / Backspace = Salta · B = Hitbox · Esc = Pausa · Tocca/tap = Salta';
+      bottomText.textContent = 'Premi spazio per iniziare';
+    }
+    modeModal.style.display = 'none';
+    paused = false;
+    resetGame();
+  }
+
+  // Initially pause and show modal
+  paused = true;
+  modeModal.style.display = 'flex';
+  btnPC.addEventListener('click', () => applyModeSelection(false));
+  btnMobile.addEventListener('click', () => applyModeSelection(true));
 
   resetGame();
 
@@ -162,6 +214,7 @@
   const keys = {};
   window.addEventListener('keydown', (e)=>{
     if (e.repeat) return;
+    if (isMobileMode) return; // disable keyboard controls in mobile mode
     keys[e.key] = true;
     if ([' ', 'ArrowUp', 'Backspace'].includes(e.key)){
       if (!onGround) jumpKeyArmed = true;
@@ -173,7 +226,7 @@
       }
     }
     if (e.key.toLowerCase() === 'b'){
-      showHitboxes = !showHitboxes;
+      if (!isMobileMode) showHitboxes = !showHitboxes;
     }
     if (e.key === 'Escape'){
       paused = !paused;
@@ -182,6 +235,7 @@
     }
   }, {passive:true});
   window.addEventListener('keyup', (e)=>{
+    if (isMobileMode) return; // disable keyboard controls in mobile mode
     keys[e.key] = false;
     if ([' ', 'ArrowUp', 'Backspace'].includes(e.key)){
       jumpKeyHeld = false;
@@ -522,10 +576,12 @@
     ctx.fillText(Math.floor(progress * 100) + '%', Math.floor(barX + barW / 2), Math.floor(barY + barH / 2));
     ctx.restore();
 
-    // overlay text: B per hitbox
-    ctx.font = '14px system-ui,Segoe UI,Roboto';
-    ctx.fillStyle = 'rgba(20,20,20,0.9)';
-    ctx.fillText('B per mostrare le hitbox', WIDTH - 180, 24);
+    // overlay text: B per hitbox (solo PC)
+    if (!isMobileMode){
+      ctx.font = '14px system-ui,Segoe UI,Roboto';
+      ctx.fillStyle = 'rgba(20,20,20,0.9)';
+      ctx.fillText('B per mostrare le hitbox', WIDTH - 180, 24);
+    }
 
     // level complete or game over text managed elsewhere
   }
