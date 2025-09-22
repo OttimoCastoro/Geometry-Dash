@@ -22,6 +22,11 @@
   .mode-actions button { flex:1; padding:10px 12px; font-size:15px; border-radius:8px; border:none; cursor:pointer; }
   .btn-pc { background:#0b65ff; color:white; }
   .btn-mobile { background:#10b981; color:white; }
+  /* Rotate overlay for mobile portrait */
+  .rotate-overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.75); z-index:6; color:#fff; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; text-align:center; padding:16px; }
+  .rotate-card { max-width:520px; }
+  .rotate-title { font-size:20px; margin-bottom:8px; }
+  .rotate-text { font-size:14px; opacity:0.9; }
 </style>
 </head>
 <body>
@@ -41,6 +46,12 @@
         </div>
       </div>
     </div>
+    <div class="rotate-overlay" id="rotateOverlay">
+      <div class="rotate-card">
+        <div class="rotate-title">Ruota il dispositivo</div>
+        <div class="rotate-text">Per la modalità telefono, gioca in orizzontale (landscape).</div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -51,6 +62,7 @@
   const modeModal = document.getElementById('modeModal');
   const btnPC = document.getElementById('btnPC');
   const btnMobile = document.getElementById('btnMobile');
+  const rotateOverlay = document.getElementById('rotateOverlay');
 
   // Hi-DPI scaling
   function resize() {
@@ -200,6 +212,8 @@
     modeModal.style.display = 'none';
     paused = false;
     resetGame();
+    // Enforce landscape for mobile
+    updateOrientationState();
   }
 
   // Initially pause and show modal
@@ -209,6 +223,28 @@
   btnMobile.addEventListener('click', () => applyModeSelection(true));
 
   resetGame();
+
+  // Orientation handling for mobile mode
+  function isPortrait(){
+    return window.innerHeight > window.innerWidth;
+  }
+  function updateOrientationState(){
+    if (!isMobileMode){
+      rotateOverlay.style.display = 'none';
+      return;
+    }
+    if (isPortrait()){
+      rotateOverlay.style.display = 'flex';
+      bottomText.textContent = 'Ruota il dispositivo in orizzontale';
+      paused = true;
+    } else {
+      rotateOverlay.style.display = 'none';
+      bottomText.textContent = 'Tocca per iniziare';
+      paused = false;
+    }
+  }
+  window.addEventListener('orientationchange', updateOrientationState, {passive:true});
+  window.addEventListener('resize', updateOrientationState, {passive:true});
 
   // Input
   const keys = {};
